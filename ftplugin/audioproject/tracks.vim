@@ -10,16 +10,43 @@ function! s:PlayTrack(lnum)
     execute ":silent !(cd " . expand("%:p:h") . "; play -q " . join(lines) . ")"
 endfunction
 
-function! s:GenerateTrack(lnum)
+function! s:PlayFile(fname)
+    let cwd = expand("%:p:h")
+    execute ":silent !(cd " . cwd . ";play -q " . a:fname . ")"
+endfunction
+
+function! s:GenerateTrack(lnum, ...)
     let track_line = <SID>WhichTrack(a:lnum)
     let track_name = <SID>GetTrackName(track_line)
     let cwd = expand("%:p:h")
-    let track_file = cwd . "/" . track_name . ".wav"
+    let track_file = track_name . ".wav"
     if filereadable(track_file)
         call delete(track_file)
     endif
     let lines = <SID>ParseTrack(track_line)
-    execute ":!(cd " . cwd . ";sox " . join(lines) . " " . track_file . ")"
+    if a:0 && a:1 > 0
+        let cmd_line = ":silent !(cd "
+    else
+        let cmd_line = ":!(cd "
+    endif
+    let cmd_line .= cwd . "; sox "
+    let cmd_line .= join(lines) . " " . track_file . ")"
+    execute cmd_line
+endfunction
+
+function! s:GenerateSong()
+    let numlines = line("$")
+    let current_line = 1
+    let cwd = expand("%:p:h")
+    let track_files = []
+    while current_line <= numlines
+        if <SID>IsTrackLine(current_line)
+            call <SID>GenerateTrack(current_line, 1)
+            call add(track_files, <SID>GetTrackName(current_line) . ".wav")
+        endif
+        let current_line += 1
+    endwhile
+    execute ":!(cd " . cwd . "; sox -m " . join(track_files) . " master.wav)"
 endfunction
 
 " }}}
@@ -53,11 +80,13 @@ function! s:ParseTrack(lnum)
 endfunction
 
 function! s:WhichTrack(lnum)
-    for i in reverse(sort(map(keys(b:tracks), 'str2nr(v:val)')))
-        if i < a:lnum
-            return i
+    let current_line = a:lnum
+    while current_line > 0
+        if <SID>IsTrackLine(current_line)
+            return current_line
         endif
-    endfor
+        let current_line -= 1
+    endwhile
     return 0
 endfunction
 
@@ -75,8 +104,8 @@ function! s:BuildTracks()
     endwhile
 endfunction
 
-function! s:IsTrackLine(line)
-    return a:line =~? '\v^track>.*$'
+function! s:IsTrackLine(lnum)
+    return getline(a:lnum) =~? '\v^track>.*$'
 endfunction
 
 function! s:GetTrackName(lnum)
@@ -84,7 +113,7 @@ function! s:GetTrackName(lnum)
     if content =~? '\v^track\s+\w+>'
         return split(content)[1]
     elseif content =~? '\v^track\s*$'
-        return printf("track_%03d", len(keys(b:tracks)))
+        return printf("track_%03d", a:lnum)
     else
         return b:tracks[<SID>WhichTrack(a:lnum)].name
     endif
@@ -115,15 +144,33 @@ function! s:AddLine(lnum)
 endfunction
 
 " }}}
+" {{{ Utilities functions
+
+function! s:FileInfo(fname)
+    let cwd = expand('%:p:h')
+    let infos = system("cd " . cwd . "; soxi " . a:fname)
+    split __fileinfo__
+    set buftype=nofile
+    set filetype=audioinfo
+    normal! ggdG
+    call append(0, split(infos, '\v\n'))
+    normal! gg
+endfunction
+" }}}
 " {{{ Listnening mappings
 nnoremap <buffer> <space> :call <SID>PlayLine(line("."))<cr>
 nnoremap <buffer> <localleader><space> :call <SID>PlayTrack(line("."))<cr>
 nnoremap <buffer> <leader><space> :call <SID>PlaySong(line("."))<cr>
 nnoremap <buffer> <localleader>gt :call <SID>GenerateTrack(line("."))<cr>
+nnoremap <buffer> <localleader>gs :call <SID>GenerateSong()<cr>
+nnoremap <buffer> <localleader>pm :call <SID>PlayFile("master.wav")<cr>
 
 " }}}
-" {{{ editing
+" {{{ Editing mappings
 inoremap <buffer> <cr> <C-R>=<SID>AddLine(line("."))<cr>
+" }}}
+" {{{ Other mappings
+nnoremap <buffer> <localleader>i :call <SID>FileInfo(expand("<cfile>"))<cr>
 " }}}
 " {{{ Initialization
 if !exists("b:tracks")
